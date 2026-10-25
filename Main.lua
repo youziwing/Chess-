@@ -1,6 +1,6 @@
 local API_URL = "https://rochess-gateway.vercel.app/api/analyze"
 local STRENGTH = "high"
-local PLAY_AS = "White"
+local PLAY_AS = "Black" -- Change to "White" when playing White.
 local SCAN_DELAY = 0.2
 local board, piecesFolder
 print("[Workspace Chess] Starting script; looking for Workspace.Board and Workspace.Pieces...")
@@ -18,6 +18,23 @@ local arrows = {}
 local arrowFrom, arrowTo
 local previous = {}
 local whiteToMove = true
+local newGameRequested = false
+
+if UI and UI.AddTab then
+    UI.AddTab("RoChess AI", function(tab)
+        local settings = tab:Section("Game Settings", "Left")
+        settings:Combo("rochess_play_as", "Play as", {"White", "Black", "Any"}, PLAY_AS == "White" and 0 or 1, function(_, text)
+            PLAY_AS = text
+        end)
+        settings:Combo("rochess_strength", "Strength", {"Low", "Medium", "High"}, 2, function(_, text)
+            STRENGTH = string.lower(text)
+        end)
+        settings:Button("New Game", function()
+            newGameRequested = true
+        end)
+        settings:Text("Green arrow = recommended move")
+    end)
+end
 
 if not board or not piecesFolder then
     error("Workspace chess board not found. Expected workspace.Board and workspace.Pieces")
@@ -192,6 +209,16 @@ local function sameSnapshot(a, b)
     return true
 end
 
+local function movedColor(before, after, types)
+    for token, oldSquare in pairs(before) do
+        local newSquare = after[token]
+        if newSquare and newSquare ~= oldSquare and types[token] then
+            return types[token]:sub(1, 5)
+        end
+    end
+    return nil
+end
+
 local function usableSnapshot(snapshot, types)
     local count, whiteKing, blackKing = 0, false, false
     for token, square in pairs(snapshot) do
@@ -222,6 +249,16 @@ while true do
     task.wait(SCAN_DELAY)
     local success, nextSnapshot, nextTypes = pcall(scan)
     if success then
+        if newGameRequested then
+            previous = nextSnapshot
+            whiteToMove = true
+            clearArrow()
+            newGameRequested = false
+            if PLAY_AS == "White" or PLAY_AS == "Any" then
+                recommend(previous, nextTypes)
+            end
+            continue
+        end
         local nextUsable = usableSnapshot(nextSnapshot, nextTypes)
         if not nextUsable then
             clearArrow()
@@ -248,9 +285,18 @@ while true do
             if not stableAgain or not sameSnapshot(confirmed, settled) then
                 continue
             end
+            local color = movedColor(previous, settled, types)
             previous = settled
-            whiteToMove = not whiteToMove
-            local yourTurn = PLAY_AS == "Any" or (PLAY_AS == "White" and whiteToMove) or (PLAY_AS == "Black" and not whiteToMove)
+            if color == "White" then
+                whiteToMove = false
+            elseif color == "Black" then
+                whiteToMove = true
+            else
+                whiteToMove = not whiteToMove
+            end
+            local yourTurn = PLAY_AS == "Any"
+                or (PLAY_AS == "White" and whiteToMove)
+                or (PLAY_AS == "Black" and not whiteToMove)
             if yourTurn then
                 recommend(settled, settledTypes)
             else

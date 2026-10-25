@@ -8,7 +8,6 @@ for _ = 1, 60 do
     board = workspace:FindFirstChild("Board")
     piecesFolder = workspace:FindFirstChild("Pieces")
     if board and piecesFolder then
-        print("[Workspace Chess] Found Board and Pieces")
         break
     end
     task.wait(0.5)
@@ -151,7 +150,6 @@ end)
 
 local function recommend(snapshot, types)
     local fen = makeFen(snapshot, types)
-    print("[Workspace Chess] FEN: " .. fen)
     local body = HttpService:JSONEncode({fen = fen, strength = STRENGTH})
     local result
     local lastRaw = ""
@@ -168,12 +166,10 @@ local function recommend(snapshot, types)
         task.wait(0.35)
     end
     if not result then
-        print("[Workspace Chess] API error: " .. tostring(lastRaw))
         return false
     end
     local uci = tostring(result.bestmove):match("([a-h][1-8][a-h][1-8][qrbn]?)")
     if not uci then
-        print("[Workspace Chess] Invalid StockfishOnline move: " .. tostring(result.bestmove))
         return false
     end
     local fromSquare, toSquare = uci:sub(1, 2), uci:sub(3, 4)
@@ -211,7 +207,6 @@ local ok, current, types = pcall(scan)
 assert(ok, current)
 local usable, pieceCount = usableSnapshot(current, types)
 while not usable do
-    print("[Workspace Chess] Waiting for a complete board (" .. pieceCount .. " pieces on board)")
     task.wait(0.5)
     local retryOk, retryCurrent, retryTypes = pcall(scan)
     if retryOk then

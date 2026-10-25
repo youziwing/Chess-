@@ -1,6 +1,6 @@
 local API_URL = "https://rochess-gateway.vercel.app/api/analyze"
 local STRENGTH = "high"
-local PLAY_AS = "Black" -- Change to "White" when playing White.
+local PLAY_AS = "White" -- "White", "Black" or "Any"
 local SCAN_DELAY = 0.2
 local board, piecesFolder
 print("[Workspace Chess] Starting script; looking for Workspace.Board and Workspace.Pieces...")
@@ -19,15 +19,29 @@ local arrowFrom, arrowTo
 local previous = {}
 local whiteToMove = true
 local newGameRequested = false
+local playAsChanged = false
+
+local PLAY_OPTIONS = {"White", "Black", "Any"}
+local STRENGTH_OPTIONS = {"Low", "Medium", "High"}
+
+local function optionIndex(options, value)
+    for i, name in ipairs(options) do
+        if string.lower(name) == string.lower(value) then return i - 1 end -- combos are 0-based
+    end
+    return 0
+end
 
 if UI and UI.AddTab then
     UI.AddTab("RoChess AI", function(tab)
         local settings = tab:Section("Game Settings", "Left")
-        settings:Combo("rochess_play_as", "Play as", {"White", "Black", "Any"}, PLAY_AS == "White" and 0 or 1, function(_, text)
-            PLAY_AS = text
+        settings:Combo("rochess_play_as_v2", "Play as", PLAY_OPTIONS, optionIndex(PLAY_OPTIONS, PLAY_AS), function(_, text)
+            if text and text ~= PLAY_AS then
+                PLAY_AS = text
+                playAsChanged = true
+            end
         end)
-        settings:Combo("rochess_strength", "Strength", {"Low", "Medium", "High"}, 2, function(_, text)
-            STRENGTH = string.lower(text)
+        settings:Combo("rochess_strength_v2", "Strength", STRENGTH_OPTIONS, optionIndex(STRENGTH_OPTIONS, STRENGTH), function(_, text)
+            if text then STRENGTH = string.lower(text) end
         end)
         settings:Button("New Game", function()
             newGameRequested = true
@@ -230,6 +244,26 @@ local function usableSnapshot(snapshot, types)
     return count >= 4 and whiteKing and blackKing, count
 end
 
+local function isStartingPosition(snapshot, types)
+    local count = 0
+    for token, square in pairs(snapshot) do
+        count = count + 1
+        local kind = types[token]
+        local rank = tonumber(square:sub(2, 2))
+        if kind == "White Pawn" and rank ~= 2 then return false end
+        if kind == "Black Pawn" and rank ~= 7 then return false end
+        if kind and kind:sub(1, 5) == "White" and kind ~= "White Pawn" and rank ~= 1 then return false end
+        if kind and kind:sub(1, 5) == "Black" and kind ~= "Black Pawn" and rank ~= 8 then return false end
+    end
+    return count == 32
+end
+
+local function isYourTurn()
+    return PLAY_AS == "Any"
+        or (PLAY_AS == "White" and whiteToMove)
+        or (PLAY_AS == "Black" and not whiteToMove)
+end
+
 local ok, current, types = pcall(scan)
 assert(ok, current)
 local usable, pieceCount = usableSnapshot(current, types)
@@ -242,8 +276,19 @@ while not usable do
     end
 end
 previous = current
+
+-- Work out whose turn it is instead of assuming White
+if isStartingPosition(current, types) then
+    whiteToMove = true
+elseif PLAY_AS == "Black" then
+    whiteToMove = false
+else
+    whiteToMove = true
+end
+playAsChanged = false -- ignore any combo callback that fired during setup
+
 print("[Workspace Chess] Ready. Play as " .. PLAY_AS)
-if PLAY_AS == "White" then recommend(current, types) end
+if isYourTurn() then recommend(current, types) end
 
 while true do
     task.wait(SCAN_DELAY)
@@ -254,9 +299,14 @@ while true do
             whiteToMove = true
             clearArrow()
             newGameRequested = false
-            if PLAY_AS == "White" or PLAY_AS == "Any" then
-                recommend(previous, nextTypes)
-            end
+            if isYourTurn() then recommend(previous, nextTypes) end
+            continue
+        end
+        if playAsChanged then
+            playAsChanged = false
+            print("[Workspace Chess] Play as changed to " .. PLAY_AS)
+            clearArrow()
+            if isYourTurn() then recommend(nextSnapshot, nextTypes) end
             continue
         end
         local nextUsable = usableSnapshot(nextSnapshot, nextTypes)
@@ -294,10 +344,7 @@ while true do
             else
                 whiteToMove = not whiteToMove
             end
-            local yourTurn = PLAY_AS == "Any"
-                or (PLAY_AS == "White" and whiteToMove)
-                or (PLAY_AS == "Black" and not whiteToMove)
-            if yourTurn then
+            if isYourTurn() then
                 recommend(settled, settledTypes)
             else
                 clearArrow()

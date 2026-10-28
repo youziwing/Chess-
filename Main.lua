@@ -1,4 +1,4 @@
-local API_URL = "https://rochess-gateway.vercel.app/api/analyze"
+local API_URL = "https://vercel-gateway-two-orpin.vercel.app/api/analyze"
 local STRENGTH = "high"
 local PLAY_AS = "White" -- "White", "Black" or "Any"
 local SCAN_DELAY = 0.2

@@ -1,9 +1,9 @@
 local API_URL = "https://vercel-gateway-two-orpin.vercel.app/api/analyze"
 local STRENGTH = "high"
-local PLAY_AS = "White" -- "White", "Black" or "Any"
-local SCAN_DELAY = 0.2
+local PLAY_AS = "White"
+local SCAN_DELAY = 0.1
+local lastSentFen = nil
 local board, piecesFolder
-print("[Workspace Chess] Starting script; looking for Workspace.Board and Workspace.Pieces...")
 for _ = 1, 60 do
     board = workspace:FindFirstChild("Board")
     piecesFolder = workspace:FindFirstChild("Pieces")
@@ -20,28 +20,27 @@ local previous = {}
 local whiteToMove = true
 local newGameRequested = false
 local playAsChanged = false
-
 local PLAY_OPTIONS = {"White", "Black", "Any"}
 local STRENGTH_OPTIONS = {"Low", "Medium", "High"}
 
 local function optionIndex(options, value)
     for i, name in ipairs(options) do
-        if string.lower(name) == string.lower(value) then return i - 1 end -- combos are 0-based
+        if string.lower(name) == string.lower(value) then return i - 1 end
     end
     return 0
 end
 
 if UI and UI.AddTab then
-    UI.AddTab("RoChess AI", function(tab)
+    UI.AddTab("Chess AI", function(tab)
         local settings = tab:Section("Game Settings", "Left")
-        settings:Combo("rochess_play_as_v2", "Play as", PLAY_OPTIONS, optionIndex(PLAY_OPTIONS, PLAY_AS), function(_, text)
-            if text and text ~= PLAY_AS then
-                PLAY_AS = text
+        settings:Combo("chess_play_as", "Play as", PLAY_OPTIONS, optionIndex(PLAY_OPTIONS, PLAY_AS), function(_, value)
+            if value and value ~= PLAY_AS then
+                PLAY_AS = value
                 playAsChanged = true
             end
         end)
-        settings:Combo("rochess_strength_v2", "Strength", STRENGTH_OPTIONS, optionIndex(STRENGTH_OPTIONS, STRENGTH), function(_, text)
-            if text then STRENGTH = string.lower(text) end
+        settings:Combo("chess_strength", "Strength", STRENGTH_OPTIONS, optionIndex(STRENGTH_OPTIONS, STRENGTH), function(_, value)
+            if value then STRENGTH = string.lower(value) end
         end)
         settings:Button("New Game", function()
             newGameRequested = true
@@ -209,7 +208,7 @@ local function recommend(snapshot, types)
         if square == fromSquare then moving = types[token] or moving break end
     end
     setArrow(fromSquare, toSquare)
-    print("[Workspace Chess] Local Stockfish move " .. moving .. ": " .. fromSquare .. " -> " .. toSquare .. " backend=" .. tostring(result.backend))
+    print("[Stockfish Local] Move " .. moving .. ": " .. fromSquare .. " -> " .. toSquare)
     return true
 end
 
@@ -223,16 +222,6 @@ local function sameSnapshot(a, b)
     return true
 end
 
-local function movedColor(before, after, types)
-    for token, oldSquare in pairs(before) do
-        local newSquare = after[token]
-        if newSquare and newSquare ~= oldSquare and types[token] then
-            return types[token]:sub(1, 5)
-        end
-    end
-    return nil
-end
-
 local function usableSnapshot(snapshot, types)
     local count, whiteKing, blackKing = 0, false, false
     for token, square in pairs(snapshot) do
@@ -242,26 +231,6 @@ local function usableSnapshot(snapshot, types)
         if kind == "Black King" then blackKing = true end
     end
     return count >= 4 and whiteKing and blackKing, count
-end
-
-local function isStartingPosition(snapshot, types)
-    local count = 0
-    for token, square in pairs(snapshot) do
-        count = count + 1
-        local kind = types[token]
-        local rank = tonumber(square:sub(2, 2))
-        if kind == "White Pawn" and rank ~= 2 then return false end
-        if kind == "Black Pawn" and rank ~= 7 then return false end
-        if kind and kind:sub(1, 5) == "White" and kind ~= "White Pawn" and rank ~= 1 then return false end
-        if kind and kind:sub(1, 5) == "Black" and kind ~= "Black Pawn" and rank ~= 8 then return false end
-    end
-    return count == 32
-end
-
-local function isYourTurn()
-    return PLAY_AS == "Any"
-        or (PLAY_AS == "White" and whiteToMove)
-        or (PLAY_AS == "Black" and not whiteToMove)
 end
 
 local ok, current, types = pcall(scan)
@@ -276,19 +245,7 @@ while not usable do
     end
 end
 previous = current
-
--- Work out whose turn it is instead of assuming White
-if isStartingPosition(current, types) then
-    whiteToMove = true
-elseif PLAY_AS == "Black" then
-    whiteToMove = false
-else
-    whiteToMove = true
-end
-playAsChanged = false -- ignore any combo callback that fired during setup
-
-print("[Workspace Chess] Ready. Play as " .. PLAY_AS)
-if isYourTurn() then recommend(current, types) end
+if PLAY_AS == "White" then recommend(current, types) end
 
 while true do
     task.wait(SCAN_DELAY)
@@ -296,17 +253,21 @@ while true do
     if success then
         if newGameRequested then
             previous = nextSnapshot
+            lastSentFen = nil
             whiteToMove = true
             clearArrow()
             newGameRequested = false
-            if isYourTurn() then recommend(previous, nextTypes) end
+            if PLAY_AS == "White" or PLAY_AS == "Any" then
+                recommend(previous, nextTypes)
+            end
             continue
         end
         if playAsChanged then
             playAsChanged = false
-            print("[Workspace Chess] Play as changed to " .. PLAY_AS)
             clearArrow()
-            if isYourTurn() then recommend(nextSnapshot, nextTypes) end
+            if PLAY_AS == "Any" or (PLAY_AS == "White" and whiteToMove) or (PLAY_AS == "Black" and not whiteToMove) then
+                recommend(nextSnapshot, nextTypes)
+            end
             continue
         end
         local nextUsable = usableSnapshot(nextSnapshot, nextTypes)
@@ -325,26 +286,25 @@ while true do
         end
         if changed then
             clearArrow()
-            task.wait(0.35)
+            task.wait(0.1)
             local stable, confirmed = pcall(scan)
             if not stable or not sameSnapshot(nextSnapshot, confirmed) then
                 continue
             end
-            task.wait(0.2)
+            task.wait(0.1)
             local stableAgain, settled, settledTypes = pcall(scan)
             if not stableAgain or not sameSnapshot(confirmed, settled) then
                 continue
             end
-            local color = movedColor(previous, settled, types)
             previous = settled
-            if color == "White" then
-                whiteToMove = false
-            elseif color == "Black" then
-                whiteToMove = true
-            else
-                whiteToMove = not whiteToMove
+            whiteToMove = not whiteToMove
+            local settledFen = makeFen(settled, settledTypes)
+            if settledFen == lastSentFen then
+                continue
             end
-            if isYourTurn() then
+            lastSentFen = settledFen
+            local yourTurn = PLAY_AS == "Any" or (PLAY_AS == "White" and whiteToMove) or (PLAY_AS == "Black" and not whiteToMove)
+            if yourTurn then
                 recommend(settled, settledTypes)
             else
                 clearArrow()
